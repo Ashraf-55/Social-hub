@@ -1,0 +1,443 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Multi-tenant root (Section 47: Multi-Business / SaaS Ready)
+// ---------------------------------------------------------------------------
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // --- Section 48: Admin Settings, persisted per-organization ---
+  // Business Information
+  contactEmail String?
+  contactPhone String?
+  timezone     String  @default("Africa/Cairo")
+
+  // Automation Settings: a global kill switch, independent of individual
+  // Automation.enabled flags — lets an admin pause all automation instantly
+  // (e.g. during an incident) without disabling each rule one by one.
+  automationsEnabled Boolean @default(true)
+
+  // AI Settings: org-specific behavior layered on top of the env-level
+  // OPENAI_API_KEY/AI_ENABLED switch (Section 6) — these only take effect
+  // when AI is enabled at all.
+  aiSystemPromptExtra String? // appended to the AI's system prompt (tone, business-specific rules)
+  defaultAiMode       AIMode  @default(HUMAN) // applied to newly-created conversations
+
+  // Notification Settings: notification categories this org doesn't want
+  // to receive (stored as the NotificationType enum's string values).
+  mutedNotificationTypes String[] @default([])
+
+  users             User[]
+  customers         Customer[]
+  socialIntegrations SocialIntegration[]
+  conversations     Conversation[]
+  automations       Automation[]
+  tags              Tag[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  webhookEvents     WebhookEvent[]
+}
+
+enum RoleName {
+  ADMIN
+  EMPLOYEE
+}
+
+model User {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         RoleName @default(EMPLOYEE)
+  active       Boolean  @default(true)
+
+  permissions UserPermission[]
+
+  // Section 48 "Notification Settings": which NotificationTypes this user
+  // wants surfaced in their bell/dropdown. null/missing key = enabled
+  // (default-on), so existing users see everything until they opt out.
+  notificationPrefs Json?
+
+  assignedConversations Conversation[] @relation("AssignedEmployee")
+  notes                 ConversationNote[]
+  auditLogs              AuditLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+enum Permission {
+  VIEW_INBOX
+  REPLY_MESSAGES
+  VIEW_CUSTOMERS
+  EDIT_CUSTOMERS
+  MANAGE_AUTOMATION
+  MANAGE_INTEGRATIONS
+  MANAGE_EMPLOYEES
+  VIEW_REPORTS
+  MANAGE_SETTINGS
+}
+
+model UserPermission {
+  id         String     @id @default(cuid())
+  userId     String
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission Permission
+
+  @@unique([userId, permission])
+}
+
+// ---------------------------------------------------------------------------
+// Customers (Section 13)
+// ---------------------------------------------------------------------------
+model Customer {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name             String?
+  phone            String?
+  email            String?
+  whatsappNumber   String?
+  facebookId       String?
+  instagramId      String?
+  tiktokId         String?
+
+  notes String?
+
+  tags          ConversationTag[]
+  conversations Conversation[]
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  lastInteraction  DateTime?
+
+  @@index([organizationId])
+  @@index([phone])
+  @@index([email])
+}
+
+// ---------------------------------------------------------------------------
+// Social Integrations (Section 17, 30)
+// ---------------------------------------------------------------------------
+enum SocialPlatform {
+  WHATSAPP
+  MESSENGER
+  INSTAGRAM
+  TIKTOK
+}
+
+enum IntegrationStatus {
+  NOT_CONNECTED
+  CONNECTED
+  ERROR
+  TOKEN_EXPIRED
+  PERMISSION_DENIED
+}
+
+model SocialIntegration {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  platform SocialPlatform
+  status   IntegrationStatus @default(NOT_CONNECTED)
+
+  // External account reference only. Actual secrets are stored encrypted,
+  // never returned to the frontend (see src/lib/crypto.ts).
+  externalAccountId   String?
+  externalAccountName String?
+  encryptedAccessToken String?
+  tokenExpiresAt       DateTime?
+
+  lastWebhookAt DateTime?
+  lastSyncAt    DateTime?
+  lastError     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  socialAccounts SocialAccount[]
+
+  @@unique([organizationId, platform])
+}
+
+// A SocialAccount links a specific external identity (e.g. one WhatsApp
+// number, one IG business account) under an integration.
+model SocialAccount {
+  id            String            @id @default(cuid())
+  integrationId String
+  integration   SocialIntegration @relation(fields: [integrationId], references: [id])
+
+  externalId String
+  label      String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([integrationId, externalId])
+}
+
+// ---------------------------------------------------------------------------
+// Conversations & Messages (Section 12, 14, 19)
+// ---------------------------------------------------------------------------
+enum ConversationStatus {
+  OPEN
+  PENDING
+  RESOLVED
+  ARCHIVED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+model Conversation {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  platform   SocialPlatform
+  customerId String
+  customer   Customer       @relation(fields: [customerId], references: [id])
+
+  status   ConversationStatus @default(OPEN)
+  priority Priority           @default(NORMAL)
+
+  assignedEmployeeId String?
+  assignedEmployee   User?   @relation("AssignedEmployee", fields: [assignedEmployeeId], references: [id])
+
+  unreadCount Int @default(0)
+
+  lastMessageAt      DateTime?
+  lastMessagePreview  String?
+
+  aiMode AIMode @default(HUMAN)
+
+  // Set when aiMode = HYBRID and the AI has a confident suggestion waiting
+  // for an employee to approve/edit/discard before it's sent (Section 24).
+  pendingAiSuggestion String?
+
+  messages Message[]
+  tags     ConversationTag[]
+  notes    ConversationNote[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, platform])
+  @@index([organizationId, status])
+  @@index([customerId])
+}
+
+enum AIMode {
+  AI
+  HUMAN
+  HYBRID
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+  UNKNOWN
+}
+
+model Message {
+  id             String @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  platform           SocialPlatform
+  externalMessageId  String?
+  direction          MessageDirection
+  type               MessageType @default(TEXT)
+  content            String?
+  metadata           Json?
+
+  sentByUserId String? // set when an employee sent this outbound message
+  aiGenerated  Boolean @default(false)
+
+  attachments MessageAttachment[]
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId])
+  @@index([externalMessageId])
+  @@index([createdAt])
+}
+
+model MessageAttachment {
+  id        String  @id @default(cuid())
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  url      String
+  mimeType String?
+}
+
+model Tag {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String
+
+  conversations ConversationTag[]
+
+  @@unique([organizationId, name])
+}
+
+model ConversationTag {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  tagId          String
+  tag            Tag          @relation(fields: [tagId], references: [id])
+  customerId     String?
+  customer       Customer?    @relation(fields: [customerId], references: [id])
+
+  @@unique([conversationId, tagId])
+}
+
+model ConversationNote {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorId       String
+  author         User         @relation(fields: [authorId], references: [id])
+  content        String
+  createdAt      DateTime     @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Automation (Section 21-22)
+// ---------------------------------------------------------------------------
+model Automation {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name        String
+  enabled     Boolean @default(true)
+  triggerType String  // e.g. "new_message"
+  conditions  Json    // e.g. { "contains": "price" }
+  actions     Json    // e.g. [{ "type": "send_reply", "text": "..." }]
+
+  executions AutomationExecution[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AutomationExecution {
+  id           String     @id @default(cuid())
+  automationId String
+  automation   Automation @relation(fields: [automationId], references: [id])
+
+  conversationId String?
+  success        Boolean
+  error          String?
+  ranAt          DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// AI (Section 23-25)
+// ---------------------------------------------------------------------------
+model AIRequest {
+  id             String   @id @default(cuid())
+  conversationId String?
+  kind           String   // generateReply | classifyMessage | summarize | ...
+  input          Json
+  output         Json?
+  success        Boolean  @default(true)
+  error          String?
+  createdAt      DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Webhooks (Section 18, 31)
+// ---------------------------------------------------------------------------
+model WebhookEvent {
+  id             String       @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  platform        SocialPlatform
+  externalEventId String
+  processed       Boolean  @default(false)
+  payload         Json
+  receivedAt      DateTime @default(now())
+  processedAt     DateTime?
+  error           String?
+
+  @@unique([platform, externalEventId])
+  @@index([processed])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications & Audit
+// ---------------------------------------------------------------------------
+enum NotificationType {
+  NEW_MESSAGE
+  NEW_CUSTOMER
+  CONVERSATION_ASSIGNED
+  AI_ESCALATION
+  INTEGRATION_ERROR
+  AUTOMATION_FAILED
+}
+
+model Notification {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  type    NotificationType
+  message String
+  read    Boolean @default(false)
+  meta    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, read])
+}
+
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  actorId String?
+  actor   User?  @relation(fields: [actorId], references: [id])
+
+  action  String // e.g. "conversation.status_changed"
+  target  String? // e.g. "Conversation:abc123"
+  meta    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+}

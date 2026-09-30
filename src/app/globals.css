@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens — a calm, low-glare palette for a tool people keep open
+ * all day (a support inbox), instead of the stark pure-white/pure-black
+ * default. One confident accent (indigo) carries every action and focus
+ * state; everything else stays quiet.
+ */
+:root {
+  --bg-app: #f3f5f8;      /* soft cool-gray canvas, not white */
+  --bg-surface: #ffffff;   /* cards/panels — still white, but now reads as "lifted" against --bg-app */
+  --bg-muted: #edf0f4;     /* table headers, hover states, pills */
+  --border: #e2e6ec;
+  --border-strong: #d3d9e0;
+
+  --text-primary: #1c2430;
+  --text-secondary: #5b6472;
+  --text-muted: #8a93a3;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef0fe;   /* active nav item, selected chip backgrounds */
+  --accent-soft-text: #4338ca;
+
+  --danger: #dc2626;
+  --danger-soft: #fef2f2;
+  --success: #16a34a;
+  --success-soft: #f0fdf4;
+  --warning: #d97706;
+  --warning-soft: #fffbeb;
+
+  /* Sidebar: intentionally darker than the rest of the UI (a common,
+     comfortable SaaS pattern — Slack/Linear/Notion) so the app reads as
+     more than "one flat white/gray page", and gives a clear visual anchor
+     separate from the content area. */
+  --sidebar-bg: #1c2333;
+  --sidebar-bg-hover: #262e42;
+  --sidebar-border: #2a3247;
+  --sidebar-text: #aeb7ca;
+  --sidebar-text-active: #ffffff;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+/* Subtle depth instead of flat borders-only cards — used via the
+   `.card` utility class where a component wants more lift than a plain
+   bg-[var(--bg-surface)] border gives it. */
+@layer components {
+  .card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 2px rgba(16, 24, 40, 0.04);
+  }
+}
+
+/* Visible keyboard focus everywhere, using the accent color rather than
+   the browser default blue (which would clash with the accent). */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}

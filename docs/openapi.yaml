@@ -1,0 +1,434 @@
+openapi: 3.0.3
+info:
+  title: Social Hub API
+  version: "0.1.0"
+  description: >
+    Unified Social Media Automation & Customer Messaging Platform.
+    Auth uses an HttpOnly session cookie (see /api/auth/login) — there is no
+    bearer token for the dashboard's own API; webhook endpoints instead use
+    per-platform signature verification (see INTEGRATIONS.md).
+servers:
+  - url: http://localhost:3000
+    description: Local development
+security:
+  - cookieAuth: []
+
+paths:
+  /api/auth/login:
+    post:
+      summary: Log in and receive a session cookie
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, minLength: 6 }
+      responses:
+        "200": { description: Logged in, session cookie set }
+        "401": { description: Invalid credentials }
+
+  /api/auth/logout:
+    post:
+      summary: Log out (clears the session cookie)
+      responses:
+        "200": { description: OK }
+
+  /api/auth/me:
+    get:
+      summary: Get the current session
+      responses:
+        "200":
+          description: Current user or null
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/Session" }
+
+  /api/conversations:
+    get:
+      summary: List conversations (Unified Inbox), with filters
+      parameters:
+        - in: query
+          name: platform
+          schema: { type: string, enum: [whatsapp, messenger, instagram, tiktok] }
+        - in: query
+          name: status
+          schema: { type: string, enum: [open, pending, resolved, archived] }
+        - in: query
+          name: employee
+          schema: { type: string }
+        - in: query
+          name: q
+          schema: { type: string }
+          description: Search customer name/phone or last message preview
+        - in: query
+          name: page
+          schema: { type: integer, default: 1 }
+      responses:
+        "200":
+          description: Paginated conversation list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conversations:
+                    type: array
+                    items: { $ref: "#/components/schemas/Conversation" }
+                  total: { type: integer }
+                  page: { type: integer }
+                  pageSize: { type: integer }
+
+  /api/conversations/{id}:
+    get:
+      summary: Get one conversation with its full message history
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      responses:
+        "200": { description: Conversation with messages }
+        "404": { description: Not found }
+
+  /api/conversations/{id}/messages:
+    post:
+      summary: Send an outbound reply through the conversation's platform adapter
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content: { type: string, maxLength: 4000 }
+      responses:
+        "200":
+          description: Message stored; `delivered` reflects whether the platform API call succeeded
+        "403": { description: Missing REPLY_MESSAGES permission }
+
+  /api/conversations/{id}/status:
+    patch:
+      summary: Update conversation status / priority / unread flag
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [OPEN, PENDING, RESOLVED, ARCHIVED] }
+                priority: { type: string, enum: [LOW, NORMAL, HIGH, URGENT] }
+                unread: { type: boolean }
+      responses:
+        "200": { description: Updated conversation }
+
+  /api/conversations/{id}/assign:
+    patch:
+      summary: Assign (or unassign) a conversation to an employee
+      parameters:
+        - $ref: "#/components/parameters/ConversationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [employeeId]
+              properties:
+                employeeId: { type: string, nullable: true }
+      responses:
+        "200": { description: Updated conversation }
+
+  /api/customers:
+    get:
+      summary: Search/list customers
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        "200": { description: Customer list }
+
+  /api/integrations:
+    get:
+      summary: List connection status for every platform adapter
+      responses:
+        "200": { description: Integration rows + current APP_MODE }
+    post:
+      summary: Connect a platform (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [platform]
+              properties:
+                platform: { type: string, enum: [whatsapp, messenger, instagram, tiktok] }
+      responses:
+        "200": { description: Updated integration row }
+        "403": { description: Admin only }
+
+  /api/integrations/disconnect:
+    post:
+      summary: Disconnect a platform (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [platform]
+              properties:
+                platform: { type: string }
+      responses:
+        "200": { description: OK }
+
+  /api/automations:
+    get:
+      summary: List automations
+      responses:
+        "200": { description: Automation list }
+    post:
+      summary: Create an automation rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AutomationInput" }
+      responses:
+        "201": { description: Created }
+        "403": { description: Missing MANAGE_AUTOMATION permission }
+
+  /api/employees:
+    get:
+      summary: List employees in the organization
+      responses:
+        "200": { description: Employee list }
+    post:
+      summary: Create an employee (Admin only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string, minLength: 8 }
+                role: { type: string, enum: [ADMIN, EMPLOYEE] }
+                permissions:
+                  type: array
+                  items: { type: string }
+      responses:
+        "201": { description: Created }
+        "403": { description: Admin only }
+
+  /api/settings:
+    get:
+      summary: Get organization settings (Section 48) — business info, AI, automation, notifications, plus summaries
+      responses:
+        "200": { description: Full settings snapshot for the caller's organization }
+    patch:
+      summary: Update organization settings (Admin only)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                contactEmail: { type: string, format: email, nullable: true }
+                contactPhone: { type: string, nullable: true }
+                timezone: { type: string }
+                automationsEnabled: { type: boolean, description: "Org-wide automation kill switch" }
+                aiSystemPromptExtra: { type: string, nullable: true, maxLength: 2000 }
+                defaultAiMode: { type: string, enum: [HUMAN, AI, HYBRID] }
+                mutedNotificationTypes:
+                  type: array
+                  items: { type: string, enum: [NEW_MESSAGE, NEW_CUSTOMER, CONVERSATION_ASSIGNED, AI_ESCALATION, INTEGRATION_ERROR, AUTOMATION_FAILED] }
+      responses:
+        "200": { description: Updated }
+        "403": { description: Admin only }
+
+  /api/notifications:
+    get:
+      summary: List notifications (Section 26)
+      parameters:
+        - in: query
+          name: unread
+          schema: { type: string, enum: ["true"] }
+      responses:
+        "200": { description: "{ notifications[], unreadCount }" }
+    patch:
+      summary: Mark one or all notifications as read
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id: { type: string }
+                all: { type: boolean }
+      responses:
+        "200": { description: OK }
+
+  /api/reports:
+    get:
+      summary: Aggregated reporting data (Section 29) for the Reports dashboard
+      responses:
+        "200": { description: Report metrics + time series }
+
+  /api/ai/extract-intent:
+    post:
+      summary: Extract structured customer intent from a conversation's latest message (Section 23)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [conversationId]
+              properties:
+                conversationId: { type: string }
+      responses:
+        "200": { description: "{ intent, product, questions[], confident }" }
+        "400": { description: AI disabled }
+
+  /api/ai/suggest-reply:
+    post:
+      summary: Ask the optional AI module to suggest a reply for a conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [conversationId]
+              properties:
+                conversationId: { type: string }
+      responses:
+        "200":
+          description: Suggested reply, or confident=false with a human-handoff fallback message
+        "400": { description: AI disabled (no OPENAI_API_KEY / AI_ENABLED=false) }
+
+  /api/mock/trigger:
+    post:
+      summary: Simulate an inbound message (Mock Mode only, Section 44)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                platform: { type: string, enum: [whatsapp, messenger, instagram, tiktok] }
+      responses:
+        "200": { description: Simulated event ingested through the real pipeline }
+        "400": { description: Mock mode disabled (APP_MODE=live) }
+
+  /api/realtime:
+    get:
+      summary: Server-Sent Events stream of real-time inbox/notification events (Section 40)
+      responses:
+        "200":
+          description: text/event-stream of `{ type, payload }` events, scoped to the caller's organization
+
+  /api/webhooks/whatsapp:
+    get:
+      summary: Meta webhook verification handshake (hub.challenge)
+      security: []
+      responses:
+        "200": { description: Echoes hub.challenge }
+        "403": { description: Invalid verify token }
+    post:
+      summary: Inbound WhatsApp Cloud API webhook event
+      security: []
+      description: >
+        Verified via the X-Hub-Signature-256 header (HMAC-SHA256 over the
+        raw body using META_APP_SECRET). Deduplicated by (platform, a
+        derived externalEventId) against the WebhookEvent table.
+      responses:
+        "200": { description: "{ received: true, processed, duplicates }" }
+        "401": { description: Invalid signature }
+
+  /api/webhooks/messenger:
+    get: { summary: Meta webhook verification handshake, security: [], responses: { "200": { description: OK } } }
+    post: { summary: Inbound Messenger webhook event, security: [], responses: { "200": { description: OK }, "401": { description: Invalid signature } } }
+
+  /api/webhooks/instagram:
+    get: { summary: Meta webhook verification handshake, security: [], responses: { "200": { description: OK } } }
+    post: { summary: Inbound Instagram webhook event, security: [], responses: { "200": { description: OK }, "401": { description: Invalid signature } } }
+
+  /api/webhooks/tiktok:
+    get: { summary: TikTok webhook verification handshake, security: [], responses: { "200": { description: OK } } }
+    post:
+      summary: Inbound TikTok webhook event
+      security: []
+      description: >
+        Implemented generically (HMAC signature check against
+        TIKTOK_WEBHOOK_SECRET); payload parsing is intentionally left unfilled
+        until Business Messaging API access is approved for the connected
+        account — see INTEGRATIONS.md.
+      responses:
+        "200": { description: OK }
+        "401": { description: Invalid signature }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: social_hub_session
+  parameters:
+    ConversationId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+  schemas:
+    Session:
+      type: object
+      properties:
+        userId: { type: string }
+        organizationId: { type: string }
+        role: { type: string, enum: [ADMIN, EMPLOYEE] }
+        email: { type: string }
+    Conversation:
+      type: object
+      properties:
+        id: { type: string }
+        platform: { type: string }
+        status: { type: string }
+        priority: { type: string }
+        unreadCount: { type: integer }
+        lastMessagePreview: { type: string, nullable: true }
+        lastMessageAt: { type: string, format: date-time, nullable: true }
+        customer: { type: object }
+        assignedEmployee: { type: object, nullable: true }
+        tags: { type: array, items: { type: object } }
+    AutomationInput:
+      type: object
+      required: [name, conditions, actions]
+      properties:
+        name: { type: string }
+        triggerType: { type: string, enum: [new_message], default: new_message }
+        conditions:
+          type: object
+          description: 'e.g. { "contains": "price" } or { "isNewCustomer": true }'
+        actions:
+          type: array
+          items:
+            type: object
+            description: 'e.g. { "type": "send_reply", "text": "..." } | { "type": "add_tag", "tagName": "..." } | { "type": "assign_employee", "employeeId": "..." } | { "type": "notify_employee" }'
+        enabled: { type: boolean, default: true }

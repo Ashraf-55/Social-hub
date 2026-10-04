@@ -3,6 +3,7 @@ import { SocialPlatformAdapter, OutboundMessageInput, SendMessageResult, Connect
 import { UnifiedMessage, UnifiedWebhookVerification } from "@/types/unified-message";
 import { metaConfig, whatsappConfig } from "@/lib/config";
 import { describeFetchError } from "@/lib/network-error";
+import { logger } from "@/lib/logger";
 
 const GRAPH_URL = "https://graph.facebook.com/v20.0";
 
@@ -78,13 +79,40 @@ export class WhatsAppAdapter implements SocialPlatformAdapter {
     }
 
     const signature = request.headers.get("x-hub-signature-256");
-    if (!signature || !metaConfig.appSecret) return { valid: false };
+
+    if (!signature) {
+      logger.warn("webhook", "whatsapp signature verification failed: no x-hub-signature-256 header on request");
+      return { valid: false };
+    }
+    if (!metaConfig.appSecret) {
+      logger.warn("webhook", "whatsapp signature verification failed: META_APP_SECRET is not set in this environment");
+      return { valid: false };
+    }
 
     const rawBody = await request.clone().text();
     const expected =
       "sha256=" + crypto.createHmac("sha256", metaConfig.appSecret).update(rawBody).digest("hex");
 
-    const valid = crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+    const sigBuf = Buffer.from(signature);
+    const expBuf = Buffer.from(expected);
+
+    // timingSafeEqual throws (instead of returning false) if the two
+    // buffers differ in length — which would otherwise crash this request
+    // as an unhandled 500 rather than a clean 401. A length mismatch here
+    // almost always means META_APP_SECRET doesn't match the App Secret
+    // Meta actually signed the request with.
+    if (sigBuf.length !== expBuf.length) {
+      logger.warn("webhook", "whatsapp signature verification failed: length mismatch (wrong META_APP_SECRET?)", {
+        receivedLength: sigBuf.length,
+        expectedLength: expBuf.length
+      });
+      return { valid: false };
+    }
+
+    const valid = crypto.timingSafeEqual(sigBuf, expBuf);
+    if (!valid) {
+      logger.warn("webhook", "whatsapp signature verification failed: HMAC mismatch (wrong META_APP_SECRET, or body was altered in transit)");
+    }
     return { valid };
   }
 

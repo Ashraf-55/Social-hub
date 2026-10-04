@@ -30,7 +30,7 @@ export async function runAutomationsForMessage(organizationId: string, conversat
   const automations = await prisma.automation.findMany({ where: { organizationId, enabled: true, triggerType: "new_message" } });
 
   for (const automation of automations) {
-    const conditions = automation.conditions as AutomationConditions;
+    const conditions = automation.conditions as unknown as AutomationConditions;
     let matched = true;
 
     if (conditions.contains) {
@@ -45,7 +45,7 @@ export async function runAutomationsForMessage(organizationId: string, conversat
 
     if (!matched) continue;
 
-    const actions = (automation.actions as AutomationAction[]) ?? [];
+    const actions = (automation.actions as unknown as AutomationAction[]) ?? [];
     let success = true;
     let error: string | undefined;
 

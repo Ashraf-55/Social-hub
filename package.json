@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "postinstall": "prisma generate",
     "dev": "cross-env NODE_OPTIONS=--dns-result-order=ipv4first next dev",
     "build": "cross-env NODE_OPTIONS=--dns-result-order=ipv4first next build",
     "start": "cross-env NODE_OPTIONS=--dns-result-order=ipv4first next start",

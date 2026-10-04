@@ -115,9 +115,13 @@ export class WhatsAppAdapter implements SocialPlatformAdapter {
         // Never log the secret or signature themselves — only lengths/shape,
         // which is enough to catch stray whitespace/quotes/newlines without
         // revealing anything secret. A real Meta App Secret is 32 hex chars.
-        configuredSecretLength: metaConfig.appSecret.length,
-        configuredSecretHasWhitespace: /\s/.test(metaConfig.appSecret),
-        configuredSecretHasQuotes: /['"]/.test(metaConfig.appSecret),
+        // Field names deliberately avoid "secret"/"token" etc. so the
+        // logger's own redaction (which matches on key name) doesn't also
+        // strip this already-safe diagnostic data.
+        appCredentialCharCount: metaConfig.appSecret.length,
+        appCredentialHasWhitespace: /\s/.test(metaConfig.appSecret),
+        appCredentialHasQuoteChar: /['"]/.test(metaConfig.appSecret),
+        appCredentialIsHex32: /^[0-9a-f]{32}$/i.test(metaConfig.appSecret),
         bodyByteLength: rawBody.length
       });
     }

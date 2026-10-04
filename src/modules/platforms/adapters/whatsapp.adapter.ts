@@ -111,7 +111,15 @@ export class WhatsAppAdapter implements SocialPlatformAdapter {
 
     const valid = crypto.timingSafeEqual(sigBuf, expBuf);
     if (!valid) {
-      logger.warn("webhook", "whatsapp signature verification failed: HMAC mismatch (wrong META_APP_SECRET, or body was altered in transit)");
+      logger.warn("webhook", "whatsapp signature verification failed: HMAC mismatch (wrong META_APP_SECRET, or body was altered in transit)", {
+        // Never log the secret or signature themselves — only lengths/shape,
+        // which is enough to catch stray whitespace/quotes/newlines without
+        // revealing anything secret. A real Meta App Secret is 32 hex chars.
+        configuredSecretLength: metaConfig.appSecret.length,
+        configuredSecretHasWhitespace: /\s/.test(metaConfig.appSecret),
+        configuredSecretHasQuotes: /['"]/.test(metaConfig.appSecret),
+        bodyByteLength: rawBody.length
+      });
     }
     return { valid };
   }

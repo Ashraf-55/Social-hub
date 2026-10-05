@@ -93,6 +93,15 @@ export class WhatsAppAdapter implements SocialPlatformAdapter {
     const expected =
       "sha256=" + crypto.createHmac("sha256", metaConfig.appSecret).update(rawBody).digest("hex");
 
+    // TEMPORARY diagnostic: log both digest values directly. These are
+    // one-way HMAC digests, not the secret itself — they cannot be reversed
+    // to recover META_APP_SECRET, so logging them is safe. Remove once the
+    // mismatch is root-caused.
+    logger.warn("webhook", "whatsapp signature debug: comparing received vs computed digest", {
+      receivedDigest: signature,
+      computedDigest: expected
+    });
+
     const sigBuf = Buffer.from(signature);
     const expBuf = Buffer.from(expected);
 

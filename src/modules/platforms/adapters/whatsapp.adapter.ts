@@ -99,26 +99,24 @@ export class WhatsAppAdapter implements SocialPlatformAdapter {
     }
 
     const rawBody = await request.clone().text();
-    const expected =
-      "sha256=" + crypto.createHmac("sha256", metaConfig.appSecret).update(rawBody).digest("hex");
 
-    const sigBuf = Buffer.from(signature);
-    const expBuf = Buffer.from(expected);
+    // Meta signs an *escaped-unicode* version of the payload (every non-ASCII
+    // character becomes a lowercase \uXXXX sequence) but delivers the body
+    // unescaped. So messages containing Arabic/emoji never match a plain HMAC
+    // of the raw body — we must also try the escaped form.
+    const escapedBody = rawBody.replace(/[\u0080-\uFFFF]/g, (ch) => "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0"));
 
-    // timingSafeEqual throws (instead of returning false) if the two
-    // buffers differ in length — which would otherwise crash this request
-    // as an unhandled 500 rather than a clean 401. A length mismatch here
-    // almost always means META_APP_SECRET doesn't match the App Secret
-    // Meta actually signed the request with.
-    if (sigBuf.length !== expBuf.length) {
-      logger.warn("webhook", "whatsapp signature verification failed: length mismatch (wrong META_APP_SECRET?)", {
-        receivedLength: sigBuf.length,
-        expectedLength: expBuf.length
-      });
-      return { valid: false };
-    }
+    const sign = (body: string) =>
+      "sha256=" + crypto.createHmac("sha256", metaConfig.appSecret).update(body, "utf8").digest("hex");
 
-    const valid = crypto.timingSafeEqual(sigBuf, expBuf);
+    const matches = (expected: string) => {
+      const sigBuf = Buffer.from(signature);
+      const expBuf = Buffer.from(expected);
+      // timingSafeEqual throws on different lengths, so check first.
+      return sigBuf.length === expBuf.length && crypto.timingSafeEqual(sigBuf, expBuf);
+    };
+
+    const valid = matches(sign(rawBody)) || (escapedBody !== rawBody && matches(sign(escapedBody)));
     if (!valid) {
       logger.warn("webhook", "whatsapp signature verification failed: HMAC mismatch (wrong META_APP_SECRET, or body was altered in transit)", {
         // Never log the secret or signature themselves — only lengths/shape,

@@ -39,12 +39,16 @@ export class WhatsAppAdapter implements SocialPlatformAdapter {
   }
 
   async sendMessage(input: OutboundMessageInput): Promise<SendMessageResult> {
-    if (!this.isConfigured()) return { success: false, error: "WhatsApp not configured" };
+    const token = input.accessTokenOverride ?? whatsappConfig.accessToken;
+    if (!token || !whatsappConfig.phoneNumberId) {
+      logger.error("integration", "send failed: WhatsApp not configured (missing access token or WHATSAPP_PHONE_NUMBER_ID)");
+      return { success: false, error: "WhatsApp not configured" };
+    }
     try {
       const res = await fetch(`${GRAPH_URL}/${whatsappConfig.phoneNumberId}/messages`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${whatsappConfig.accessToken}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
@@ -54,11 +58,16 @@ export class WhatsAppAdapter implements SocialPlatformAdapter {
           text: { body: input.content }
         })
       });
-      const data = await res.json();
-      if (!res.ok) return { success: false, error: JSON.stringify(data) };
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        logger.error("integration", "send failed", { status: res.status, to: input.toExternalId, response: data });
+        return { success: false, error: JSON.stringify(data) };
+      }
       return { success: true, externalMessageId: data.messages?.[0]?.id };
     } catch (e) {
-      return { success: false, error: describeFetchError(e) };
+      const error = describeFetchError(e);
+      logger.error("integration", "send failed (network)", { error });
+      return { success: false, error };
     }
   }
 

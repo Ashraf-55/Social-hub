@@ -76,6 +76,7 @@ async function runAction(organizationId: string, conversationId: string, message
       const adapter = getAdapter(message.platform);
       const accessTokenOverride = (await resolveAccessToken(organizationId, message.platform)) ?? undefined;
       const result = await adapter.sendMessage({ toExternalId: message.customerExternalId, content: action.text, accessTokenOverride });
+      if (!result.success) throw new Error(result.error ?? `${message.platform} send failed`);
       await prisma.message.create({
         data: {
           conversationId,

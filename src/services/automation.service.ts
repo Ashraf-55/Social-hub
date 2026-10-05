@@ -18,6 +18,23 @@ interface AutomationAction {
 }
 
 /**
+ * Json columns are sometimes stored as a JSON *string* (e.g. rows inserted by
+ * hand: "{\"contains\": \"x\"}"). Parse up to twice so both the proper form and
+ * the stringified form work; otherwise fall back to the default.
+ */
+function asJson<T>(value: unknown, fallback: T): T {
+  let v: unknown = value;
+  for (let i = 0; i < 2 && typeof v === "string"; i++) {
+    try {
+      v = JSON.parse(v as string);
+    } catch {
+      return fallback;
+    }
+  }
+  return (v ?? fallback) as T;
+}
+
+/**
  * Evaluates all enabled automations for an organization against one
  * incoming message. This is intentionally simple rule-matching for
  * immediate in-app actions (Section 21); anything more elaborate is meant
@@ -30,7 +47,7 @@ export async function runAutomationsForMessage(organizationId: string, conversat
   const automations = await prisma.automation.findMany({ where: { organizationId, enabled: true, triggerType: "new_message" } });
 
   for (const automation of automations) {
-    const conditions = automation.conditions as unknown as AutomationConditions;
+    const conditions = asJson<AutomationConditions>(automation.conditions, {});
     let matched = true;
 
     if (conditions.contains) {
@@ -45,7 +62,11 @@ export async function runAutomationsForMessage(organizationId: string, conversat
 
     if (!matched) continue;
 
-    const actions = (automation.actions as unknown as AutomationAction[]) ?? [];
+    const parsedActions = asJson<AutomationAction[]>(automation.actions, []);
+    const actions = Array.isArray(parsedActions) ? parsedActions : [];
+    if (actions.length === 0) {
+      logger.warn("automation", "automation has no valid actions, skipping", { automationId: automation.id, automationName: automation.name });
+    }
     let success = true;
     let error: string | undefined;
 
